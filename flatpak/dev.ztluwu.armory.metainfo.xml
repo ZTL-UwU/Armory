@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+    <id>dev.ztluwu.armory</id>
+    <name>Armory</name>
+    <summary>Armory application</summary>
+    <metadata_license>CC0-1.0</metadata_license>
+    <project_license>MIT</project_license>
+    <description>
+        <p>
+            Armory is a third-party ROG laptop control application for Linux systems.
+        </p>
+    </description>
+    <launchable type="desktop-id">dev.ztluwu.armory.desktop</launchable>
+    <provides>
+        <binary>armory</binary>
+    </provides>
+    <content_rating type="oars-1.1" />
+    <categories>
+        <category>Utility</category>
+    </categories>
+</component>

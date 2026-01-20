@@ -1,0 +1,41 @@
+app-id: dev.ztluwu.armory
+runtime: org.gnome.Platform
+runtime-version: '48'
+sdk: org.gnome.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.node22
+command: armory
+
+finish-args:
+  - --share=ipc
+  - --socket=fallback-x11
+  - --socket=wayland
+  - --device=dri
+
+build-options:
+  append-path: /usr/lib/sdk/node22/bin
+  env:
+    npm_config_nodedir: /usr/lib/sdk/node22
+  no-debuginfo: true
+  strip: false
+
+modules:
+  - name: armory
+    buildsystem: simple
+    build-commands:
+      - install -Dm755 app /app/bin/armory
+      - install -Dm755 index.node /app/bin/index.node # GTKX native module
+      - install -Dm644 dev.ztluwu.armory.desktop /app/share/applications/dev.ztluwu.armory.desktop
+      - install -Dm644 dev.ztluwu.armory.metainfo.xml /app/share/metainfo/dev.ztluwu.armory.metainfo.xml
+      - install -Dm644 dev.ztluwu.armory.svg /app/share/icons/hicolor/scalable/apps/dev.ztluwu.armory.svg
+    sources:
+      - type: file
+        path: ../dist/app
+      - type: file
+        path: ../dist/index.node
+      - type: file
+        path: dev.ztluwu.armory.desktop
+      - type: file
+        path: dev.ztluwu.armory.metainfo.xml
+      - type: file
+        path: dev.ztluwu.armory.svg

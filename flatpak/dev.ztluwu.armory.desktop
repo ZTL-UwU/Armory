@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Armory
+Comment=ROG control center
+Exec=armory
+Icon=dev.ztluwu.armory
+Terminal=false
+Type=Application
+Categories=Utility;
+StartupNotify=true
