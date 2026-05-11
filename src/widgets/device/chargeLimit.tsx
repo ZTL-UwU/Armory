@@ -1,5 +1,5 @@
 import * as Gtk from '@gtkx/ffi/gtk';
-import { AdwActionRow, GtkScale, x } from '@gtkx/react';
+import { AdwActionRow, GtkScale } from '@gtkx/react';
 import consola from 'consola';
 import { useEffect, useState } from 'react';
 
@@ -18,8 +18,8 @@ export function ChargeLimit() {
     return () => clearInterval(interval);
   }, []);
 
-  const handleChargeChange = (scale: any) => {
-    const newLimit = Math.round(scale.getValue());
+  const handleChargeChange = (value: number) => {
+    const newLimit = Math.round(value);
     setLocalChargeLimit(newLimit);
     // Apply the change immediately
     const success = setChargeLimit(newLimit);
@@ -30,18 +30,24 @@ export function ChargeLimit() {
 
   return (
     <AdwActionRow title="Charge Limit" subtitle={`${chargeLimit}%`}>
-      <x.ActionRowSuffix>
+      <AdwActionRow.AddSuffix>
         <GtkScale
           hexpand
-          adjustment={new Gtk.Adjustment(chargeLimit, 0, 100, 1, 10, 0)}
+          value={chargeLimit}
+          lower={0}
+          upper={100}
+          stepIncrement={1}
+          pageIncrement={10}
+          pageSize={0}
+          marks={[
+            { value: 0, label: '0', position: Gtk.PositionType.BOTTOM },
+            { value: 50, label: '50', position: Gtk.PositionType.BOTTOM },
+            { value: 80, label: '80', position: Gtk.PositionType.BOTTOM },
+            { value: 100, label: '100', position: Gtk.PositionType.BOTTOM },
+          ]}
           onValueChanged={handleChargeChange}
-        >
-          <x.ScaleMark value={0} label="0" position={Gtk.PositionType.BOTTOM} />
-          <x.ScaleMark value={50} label="50" position={Gtk.PositionType.BOTTOM} />
-          <x.ScaleMark value={80} label="80" position={Gtk.PositionType.BOTTOM} />
-          <x.ScaleMark value={100} label="100" position={Gtk.PositionType.BOTTOM} />
-        </GtkScale>
-      </x.ActionRowSuffix>
+        />
+      </AdwActionRow.AddSuffix>
     </AdwActionRow>
   );
 }

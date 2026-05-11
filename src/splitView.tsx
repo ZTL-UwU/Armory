@@ -7,7 +7,6 @@ import {
   GtkLabel,
   GtkListBox,
   GtkScrolledWindow,
-  x,
 } from '@gtkx/react';
 import { useState } from 'react';
 
@@ -43,15 +42,15 @@ export function SplitView() {
       minSidebarWidth={200}
       maxSidebarWidth={300}
     >
-      <x.NavigationPage for={AdwNavigationSplitView} id="sidebar" title="ROG Center">
+      <AdwNavigationSplitView.Page id="sidebar" title="Armory">
         <AdwToolbarView>
-          <x.ToolbarTop>
+          <AdwToolbarView.AddTopBar>
             <AdwHeaderBar />
-          </x.ToolbarTop>
+          </AdwToolbarView.AddTopBar>
           <GtkScrolledWindow vexpand>
             <GtkListBox
               cssClasses={['navigation-sidebar']}
-              onRowSelected={(_, row) => {
+              onRowSelected={(row) => {
                 if (!row)
                   return;
                 const item = items[row.getIndex()];
@@ -68,20 +67,19 @@ export function SplitView() {
             </GtkListBox>
           </GtkScrolledWindow>
         </AdwToolbarView>
-      </x.NavigationPage>
+      </AdwNavigationSplitView.Page>
 
-      <x.NavigationPage
-        for={AdwNavigationSplitView}
+      <AdwNavigationSplitView.Page
         id="content"
         title={selected?.title ?? ''}
       >
         <AdwToolbarView>
-          <x.ToolbarTop>
+          <AdwToolbarView.AddTopBar>
             <AdwHeaderBar />
-          </x.ToolbarTop>
+          </AdwToolbarView.AddTopBar>
           <Page selected={selected}></Page>
         </AdwToolbarView>
-      </x.NavigationPage>
+      </AdwNavigationSplitView.Page>
     </AdwNavigationSplitView>
   );
 }

@@ -1,10 +1,8 @@
 import * as Gdk from '@gtkx/ffi/gdk';
-import * as Gtk from '@gtkx/ffi/gtk';
 import {
   AdwActionRow,
   AdwComboRow,
   GtkColorDialogButton,
-  x,
 } from '@gtkx/react';
 
 import consola from 'consola';
@@ -71,20 +69,17 @@ export function KeyboardAura() {
     return () => clearInterval(interval);
   }, []);
 
-  const handleColorButtonNotify = (setter: (color: Gdk.RGBA) => void, isPrimary: boolean) => (button: Gtk.ColorDialogButton, propName: string) => {
-    if (propName === 'rgba') {
-      const rgba = button.getRgba();
-      setter(rgba);
+  const handleColorChanged = (setter: (color: Gdk.RGBA) => void, isPrimary: boolean) => (rgba: Gdk.RGBA) => {
+    setter(rgba);
 
-      if (selectedMode) {
-        const primary = isPrimary ? rgba : primaryColor;
-        const secondary = isPrimary ? secondaryColor : rgba;
-        applyAura(selectedMode, primary, secondary);
-      }
+    if (selectedMode) {
+      const primary = isPrimary ? rgba : primaryColor;
+      const secondary = isPrimary ? secondaryColor : rgba;
+      applyAura(selectedMode, primary, secondary);
     }
   };
-  const handlePrimaryColorNotify = handleColorButtonNotify(setPrimaryColor, true);
-  const handleSecondaryColorNotify = handleColorButtonNotify(setSecondaryColor, false);
+  const handlePrimaryColorChanged = handleColorChanged(setPrimaryColor, true);
+  const handleSecondaryColorChanged = handleColorChanged(setSecondaryColor, false);
 
   function handleSpeedChanged(id: string) {
     setSelectedSpeed(id);
@@ -109,25 +104,19 @@ export function KeyboardAura() {
         title="Aura Mode"
         subtitle="Select the keyboard aura mode"
         selectedId={selectedMode}
+        items={auraModes.map(mode => ({ id: mode.id, value: mode.name }))}
         onSelectionChanged={handleSelectionChanged}
-      >
-        {
-          auraModes.map(mode => (
-            <x.SimpleListItem id={mode.id} value={mode.name} key={mode.id} />
-          ))
-        }
-      </AdwComboRow>
+      />
       <AdwActionRow
         title="Color"
         subtitle="Select the keyboard backlight color"
       >
-        <x.ActionRowSuffix>
+        <AdwActionRow.AddSuffix>
           <GtkColorDialogButton
             rgba={primaryColor}
-            dialog={new Gtk.ColorDialog()}
-            onNotify={handlePrimaryColorNotify}
+            onRgbaChanged={handlePrimaryColorChanged}
           />
-        </x.ActionRowSuffix>
+        </AdwActionRow.AddSuffix>
       </AdwActionRow>
       {
         auraModes.find(mode => mode.id === selectedMode)?.requiredParams.includes('colour2') && (
@@ -135,13 +124,12 @@ export function KeyboardAura() {
             title="Secondary Color"
             subtitle="Select the secondary keyboard backlight color"
           >
-            <x.ActionRowSuffix>
+            <AdwActionRow.AddSuffix>
               <GtkColorDialogButton
                 rgba={secondaryColor}
-                dialog={new Gtk.ColorDialog()}
-                onNotify={handleSecondaryColorNotify}
+                onRgbaChanged={handleSecondaryColorChanged}
               />
-            </x.ActionRowSuffix>
+            </AdwActionRow.AddSuffix>
           </AdwActionRow>
 
         )
@@ -154,11 +142,12 @@ export function KeyboardAura() {
             subtitle="Select the effect speed"
             selectedId={selectedSpeed}
             onSelectionChanged={handleSpeedChanged}
-          >
-            <x.SimpleListItem id="low" value="Low" />
-            <x.SimpleListItem id="med" value="Med" />
-            <x.SimpleListItem id="high" value="High" />
-          </AdwComboRow>
+            items={[
+              { id: 'low', value: 'Low' },
+              { id: 'med', value: 'Med' },
+              { id: 'high', value: 'High' },
+            ]}
+          />
         )
       }
       {
@@ -169,12 +158,13 @@ export function KeyboardAura() {
             subtitle="Select the effect direction"
             selectedId={selectedDirection}
             onSelectionChanged={handleDirectionChanged}
-          >
-            <x.SimpleListItem id="up" value="Up" />
-            <x.SimpleListItem id="down" value="Down" />
-            <x.SimpleListItem id="left" value="Left" />
-            <x.SimpleListItem id="right" value="Right" />
-          </AdwComboRow>
+            items={[
+              { id: 'up', value: 'Up' },
+              { id: 'down', value: 'Down' },
+              { id: 'left', value: 'Left' },
+              { id: 'right', value: 'Right' },
+            ]}
+          />
         )
       }
     </>

@@ -1,4 +1,4 @@
-import { AdwComboRow, x } from '@gtkx/react';
+import { AdwComboRow } from '@gtkx/react';
 import { useEffect, useState } from 'react';
 import { getCurrentPowerMode, listPowerModes, setPowerMode } from '../../services/device.js';
 
@@ -27,13 +27,8 @@ export function PowerMode() {
       title="Power Mode"
       subtitle="Select the desired power mode"
       selectedId={selectedId}
+      items={powerModes.map(mode => ({ id: mode.id, value: mode.name }))}
       onSelectionChanged={handleSelectionChanged}
-    >
-      {
-        powerModes.map(mode => (
-          <x.SimpleListItem key={mode.id} id={mode.id} value={mode.name} />
-        ))
-      }
-    </AdwComboRow>
+    />
   );
 }

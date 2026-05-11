@@ -1,5 +1,5 @@
 import type { TBrightnessLevel } from '../../services/keyboard.js';
-import { AdwComboRow, x } from '@gtkx/react';
+import { AdwComboRow } from '@gtkx/react';
 
 import { useEffect, useState } from 'react';
 import { getCurrentBrightness, setKeyboardBrightness } from '../../services/keyboard.js';
@@ -27,12 +27,13 @@ export function KeyboardBrightness() {
       title="Brightness"
       subtitle="Adjust the keyboard brightness level"
       selectedId={selectedId}
+      items={[
+        { id: 'off', value: 'Off' },
+        { id: 'low', value: 'Low' },
+        { id: 'med', value: 'Mid' },
+        { id: 'high', value: 'High' },
+      ]}
       onSelectionChanged={handleSelectionChanged}
-    >
-      <x.SimpleListItem id="off" value="Off" />
-      <x.SimpleListItem id="low" value="Low" />
-      <x.SimpleListItem id="med" value="Mid" />
-      <x.SimpleListItem id="high" value="High" />
-    </AdwComboRow>
+    />
   );
 }

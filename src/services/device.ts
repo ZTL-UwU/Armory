@@ -1,42 +1,34 @@
-import * as Gio from '@gtkx/ffi/gio';
+import * as GLib from '@gtkx/ffi/glib';
+import { createRef } from '@gtkx/native';
 import consola from 'consola';
-import { exec } from '../utils.js';
+
+import { createSystemProxy, getProperty, PLATFORM_IFACE, PLATFORM_PATH, setProperty } from './dbus.js';
 
 /**
- * Get the current charge limit from asusd via D-Bus
+ * Charge limit from asusd (`ChargeControlEndThreshold` on `xyz.ljones.Platform`).
  */
 export function getChargeLimit(): number {
   try {
-    const proxy = Gio.DBusProxy.newForBusSync(
-      Gio.BusType.SYSTEM,
-      Gio.DBusProxyFlags.NONE,
-      'xyz.ljones.Asusd',
-      '/xyz/ljones',
-      'xyz.ljones.Platform',
-    );
-
-    const limit = proxy.getCachedProperty('ChargeControlEndThreshold');
-    if (limit) {
+    const proxy = createSystemProxy(PLATFORM_PATH, PLATFORM_IFACE);
+    const limit = getProperty(proxy, 'ChargeControlEndThreshold');
+    if (limit)
       return limit.getByte() || 100;
-    }
-    return 100; // Default to 100 if no result
+    return 100;
   }
   catch (error) {
     consola.error('Failed to get charge limit:', error);
-    return 100; // Default to 100 on error
+    return 100;
   }
 }
 
-/**
- * Set the charge limit via asusctl
- */
 export function setChargeLimit(limit: number): boolean {
   try {
     if (limit < 0 || limit > 100) {
       consola.error('Charge limit must be between 0 and 100');
       return false;
     }
-    exec(`asusctl battery limit ${limit}`);
+    const proxy = createSystemProxy(PLATFORM_PATH, PLATFORM_IFACE);
+    setProperty(proxy, PLATFORM_IFACE, 'ChargeControlEndThreshold', GLib.Variant.newByte(limit));
     return true;
   }
   catch (error) {
@@ -50,16 +42,51 @@ export interface TPowerMode {
   name: string;
 }
 
+/** Matches `rog_platform::platform::PlatformProfile` (u32 enum in DBus). */
+const POWER_MODE_NAMES: Record<number, string> = {
+  0: 'Balanced',
+  1: 'Performance',
+  2: 'Quiet',
+  3: 'Low Power',
+  4: 'Custom',
+};
+
+function modeIdFromValue(value: number): string {
+  return POWER_MODE_NAMES[value]?.toLowerCase().replace(/\s+/g, '-') ?? String(value);
+}
+
+function modeValueFromId(id: string): number | undefined {
+  return Object.keys(POWER_MODE_NAMES)
+    .map(Number)
+    .find(value => modeIdFromValue(value) === id);
+}
+
+function getUintVariant(value: GLib.Variant): number {
+  switch (value.getTypeString()) {
+    case 'u':
+      return value.getUint32();
+    case 'y':
+      return value.getByte();
+    case 'i':
+      return value.getInt32();
+    default:
+      return Number(value.print(false));
+  }
+}
+
 export function listPowerModes(): TPowerMode[] {
   try {
-    const output = exec('asusctl profile list');
-    // Expected output format: "Quiet\nBalanced\nPerformance"
-    return output.split('\n').filter(mode => mode.length > 0).map(
-      (mode: string) => ({
-        id: mode.toLowerCase(),
-        name: mode,
+    const proxy = createSystemProxy(PLATFORM_PATH, PLATFORM_IFACE);
+    const choices = getProperty(proxy, 'PlatformProfileChoices');
+    if (!choices)
+      return [];
+
+    return Array.from({ length: choices.nChildren() }, (_, i) => getUintVariant(choices.getChildValue(i))).map(
+      value => ({
+        id: modeIdFromValue(value),
+        name: POWER_MODE_NAMES[value] ?? `Mode ${value}`,
       }),
-    ) || [];
+    );
   }
   catch (error) {
     consola.error('Failed to list power modes:', error);
@@ -69,15 +96,11 @@ export function listPowerModes(): TPowerMode[] {
 
 export function getCurrentPowerMode(): string | undefined {
   try {
-    const powerModes = listPowerModes();
-    if (powerModes.length === 0)
+    const proxy = createSystemProxy(PLATFORM_PATH, PLATFORM_IFACE);
+    const mode = getProperty(proxy, 'PlatformProfile');
+    if (!mode)
       return undefined;
-
-    const output = exec('asusctl profile get');
-    // Expected output format: "Active profile: Performance\nAC profile Performance\nBattery profile Quiet"
-    return powerModes.find(
-      mode => mode.name === output.match(/Active profile:\s*(\w+)/)?.[1],
-    )?.id || undefined;
+    return modeIdFromValue(getUintVariant(mode));
   }
   catch (error) {
     consola.error('Failed to get current power mode:', error);
@@ -87,13 +110,13 @@ export function getCurrentPowerMode(): string | undefined {
 
 export function setPowerMode(modeId: string): boolean {
   try {
-    const powerModes = listPowerModes();
-    const mode = powerModes.find(m => m.id === modeId);
-    if (!mode) {
+    const modeValue = modeValueFromId(modeId);
+    if (modeValue === undefined) {
       consola.error('Invalid power mode ID:', modeId);
       return false;
     }
-    exec(`asusctl profile set ${mode.name}`);
+    const proxy = createSystemProxy(PLATFORM_PATH, PLATFORM_IFACE);
+    setProperty(proxy, PLATFORM_IFACE, 'PlatformProfile', GLib.Variant.newUint32(modeValue));
     return true;
   }
   catch (error) {
@@ -102,43 +125,51 @@ export function setPowerMode(modeId: string): boolean {
   }
 }
 
-/*
-example output of `asusctl info`:
-asusctl v6.3.0
-
-Software version: 6.3.0
-  Product family: ROG Zephyrus G14
-      Board name: GA403UV
-*/
 export interface TDeviceInfo {
   key: string;
   name: string;
   content: string;
 }
+
+function readDmiValue(name: string): string | undefined {
+  try {
+    const contents = createRef<number[]>([]);
+    const length = createRef(0);
+    GLib.fileGetContents(`/sys/class/dmi/id/${name}`, contents, length);
+    return String.fromCharCode(...contents.value.slice(0, length.value)).trim() || undefined;
+  }
+  catch {
+    return undefined;
+  }
+}
+
 export function getDeviceInfo(): TDeviceInfo[] {
   try {
-    const output = exec('asusctl info');
     const infoList: TDeviceInfo[] = [];
-    // Parse the output as needed
-    if (output.match(/asusctl v([\d.]+)/)?.[1]) {
+    const proxy = createSystemProxy(PLATFORM_PATH, PLATFORM_IFACE);
+    const version = getProperty(proxy, 'Version')?.getString();
+    const productFamily = readDmiValue('product_family');
+    const boardName = readDmiValue('board_name');
+
+    if (version) {
       infoList.push({
         key: 'version',
-        name: 'asusctl Version',
-        content: output.match(/asusctl v([\d.]+)/)?.[1] || 'Unknown',
+        name: 'asusd Version',
+        content: version,
       });
     }
-    if (output.match(/Product family:\s*(.+)/)?.[1]) {
+    if (productFamily) {
       infoList.push({
         key: 'product_family',
         name: 'Product Family',
-        content: output.match(/Product family:\s*(.+)/)?.[1] || 'Unknown',
+        content: productFamily,
       });
     }
-    if (output.match(/Board name:\s*(.+)/)?.[1]) {
+    if (boardName) {
       infoList.push({
         key: 'board_name',
         name: 'Board Name',
-        content: output.match(/Board name:\s*(.+)/)?.[1] || 'Unknown',
+        content: boardName,
       });
     }
     return infoList;

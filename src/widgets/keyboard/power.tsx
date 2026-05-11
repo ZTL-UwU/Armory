@@ -17,28 +17,28 @@ export function KeyboardPower() {
         title="Boot"
         subtitle="Enable keyboard backlight on system startup"
         active={powerStates.boot}
-        onNotify={self => handleToggle('boot', self.getActive())}
+        onActiveChanged={active => handleToggle('boot', active)}
       >
       </AdwSwitchRow>
       <AdwSwitchRow
         title="Awake"
         subtitle="Keep keyboard backlight on when system is awake"
         active={powerStates.awake}
-        onNotify={self => handleToggle('awake', self.getActive())}
+        onActiveChanged={active => handleToggle('awake', active)}
       >
       </AdwSwitchRow>
       <AdwSwitchRow
         title="Sleep"
         subtitle="Keep keyboard backlight on when system is sleeping"
         active={powerStates.sleep}
-        onNotify={self => handleToggle('sleep', self.getActive())}
+        onActiveChanged={active => handleToggle('sleep', active)}
       >
       </AdwSwitchRow>
       <AdwSwitchRow
         title="Shutdown"
         subtitle="Keep keyboard backlight on when system is shut down"
         active={powerStates.shutdown}
-        onNotify={self => handleToggle('shutdown', self.getActive())}
+        onActiveChanged={active => handleToggle('shutdown', active)}
       >
       </AdwSwitchRow>
     </>

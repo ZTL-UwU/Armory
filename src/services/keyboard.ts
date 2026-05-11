@@ -1,26 +1,72 @@
+import * as Gio from '@gtkx/ffi/gio';
+import * as GLib from '@gtkx/ffi/glib';
 import consola from 'consola';
-import { exec } from '../utils.js';
+
+import { AURA_IFACE, AURA_PATH, createSystemProxy, findInterfaceProxies, getProperty, setProperty } from './dbus.js';
+
+function getAuraProxies(): Gio.DBusProxy[] {
+  try {
+    const proxies = findInterfaceProxies(AURA_IFACE);
+    if (proxies.length > 0)
+      return proxies;
+  }
+  catch {
+    // No ObjectManager on older asusd: use default Aura path from `rog-dbus`.
+  }
+  return [createSystemProxy(AURA_PATH, AURA_IFACE)];
+}
+
+function getFirstAuraProxy(): Gio.DBusProxy {
+  return getAuraProxies()[0];
+}
+
+function getUintVariant(value: GLib.Variant): number {
+  switch (value.getTypeString()) {
+    case 'u':
+      return value.getUint32();
+    case 'y':
+      return value.getByte();
+    case 'i':
+      return value.getInt32();
+    default:
+      return Number(value.print(false));
+  }
+}
 
 export function getCurrentBrightness(): string {
   try {
-    const output = exec('asusctl leds get');
-    // Expected output format: "Current keyboard led brightness: Med"
-    const match = output.match(/brightness:\s+(\w+)/);
-    if (match && match[1]) {
-      return match[1].toLowerCase();
-    }
-    return 'med'; // Default to 'med' if parsing fails
+    const brightness = getProperty(getFirstAuraProxy(), 'Brightness');
+    if (!brightness)
+      return 'med';
+    return BRIGHTNESS_BY_VALUE[getUintVariant(brightness)] ?? 'med';
   }
   catch (error) {
     consola.error('Failed to get current brightness:', error);
-    return 'med'; // Default to 'med' on error
+    return 'med';
   }
 }
 
 export type TBrightnessLevel = 'off' | 'low' | 'med' | 'high';
+
+const BRIGHTNESS_BY_VALUE: Record<number, TBrightnessLevel> = {
+  0: 'off',
+  1: 'low',
+  2: 'med',
+  3: 'high',
+};
+
+const BRIGHTNESS_VALUE: Record<TBrightnessLevel, number> = {
+  off: 0,
+  low: 1,
+  med: 2,
+  high: 3,
+};
+
 export function setKeyboardBrightness(level: TBrightnessLevel): boolean {
   try {
-    exec(`asusctl leds set ${level}`);
+    for (const proxy of getAuraProxies()) {
+      setProperty(proxy, AURA_IFACE, 'Brightness', GLib.Variant.newUint32(BRIGHTNESS_VALUE[level]));
+    }
     return true;
   }
   catch (error) {
@@ -38,26 +84,8 @@ export interface TKeyboardPowerStates {
   shutdown: boolean;
 }
 
-function findAuraDevicePath(): string | undefined {
-  try {
-    const output = exec('gdbus introspect --system --dest xyz.ljones.Asusd --object-path /xyz/ljones/aura');
-    const regex = /^\s*node\s+([^\s{]+)/gm;
-    let match: RegExpExecArray | null;
-    // eslint-disable-next-line no-cond-assign
-    while ((match = regex.exec(output)) !== null) {
-      const name = match[1];
-      // ignore root listings and absolute paths
-      if (name === '{' || name.startsWith('/'))
-        continue;
-      return `/xyz/ljones/aura/${name}`;
-    }
-    return undefined;
-  }
-  catch (error) {
-    consola.error('Failed to find aura device path:', error);
-    return undefined;
-  }
-}
+/** `PowerZones::Keyboard` in `rog-aura` (DBus `u`). */
+const POWER_ZONE_KEYBOARD = 1;
 
 export function getKeyboardPowerStates(): TKeyboardPowerStates {
   const defaultStates: TKeyboardPowerStates = {
@@ -68,46 +96,22 @@ export function getKeyboardPowerStates(): TKeyboardPowerStates {
   };
 
   try {
-    const path = findAuraDevicePath();
-    if (!path) {
-      consola.error('No aura device path found');
+    const power = getProperty(getFirstAuraProxy(), 'LedPower');
+    if (!power)
       return defaultStates;
-    }
 
-    // Get all properties and parse LedPower robustly across formats
-    const propsOutput = getAuraProperties(path);
-    if (!propsOutput) {
-      consola.error('Failed to get aura properties');
-      return defaultStates;
-    }
-
-    // Expected LedPower snippet examples:
-    //  - "'LedPower': <byte 0x0f>"
-    //  - "'LedPower': <uint32 15>"
-    //  - "'LedPower': <int32 15>"
-    //  - "'LedPower': <0x0f>" (rare)
-    const ledProp = propsOutput.match(/'LedPower':\s*<([^>]+)>/i);
-    if (!ledProp) {
-      consola.error('Failed to locate LedPower property');
-      return defaultStates;
-    }
-
-    const raw = ledProp[1];
-
-    // First, try parsing tuple-of-booleans format:
-    // Example raw: "([(uint32 1, true, true, true, true)],)"
-    const tupleMatch = raw.match(/\(\s*uint32\s+\d+,\s*(true|false),\s*(true|false),\s*(true|false),\s*(true|false)\s*\)/i);
-    if (tupleMatch) {
-      const [b, a, s, d] = tupleMatch.slice(1, 5).map(v => v.toLowerCase() === 'true');
+    const states = power.getChildValue(0);
+    for (let i = 0; i < states.nChildren(); i += 1) {
+      const state = states.getChildValue(i);
+      if (getUintVariant(state.getChildValue(0)) !== POWER_ZONE_KEYBOARD)
+        continue;
       return {
-        boot: b,
-        awake: a,
-        sleep: s,
-        shutdown: d,
+        boot: state.getChildValue(1).getBoolean(),
+        awake: state.getChildValue(2).getBoolean(),
+        sleep: state.getChildValue(3).getBoolean(),
+        shutdown: state.getChildValue(4).getBoolean(),
       };
     }
-
-    consola.error(`Unrecognized LedPower format: ${raw}`);
     return defaultStates;
   }
   catch (error) {
@@ -118,7 +122,13 @@ export function getKeyboardPowerStates(): TKeyboardPowerStates {
 
 export function setKeyboardPowerState(state: TKeyboardPowerStates): boolean {
   try {
-    exec(`asusctl aura-power keyboard ${Object.entries(state).map(([k, v]) => v ? `--${k}` : '').join(' ')}`);
+    const value = GLib.Variant.parse(
+      `([(uint32 ${POWER_ZONE_KEYBOARD}, ${state.boot}, ${state.awake}, ${state.sleep}, ${state.shutdown})],)`,
+      new GLib.VariantType('(a(ubbbb))'),
+    );
+    for (const proxy of getAuraProxies()) {
+      setProperty(proxy, AURA_IFACE, 'LedPower', value);
+    }
     return true;
   }
   catch (error) {
@@ -136,56 +146,44 @@ export interface TAuraMode {
 
 export type TAuraModeParams = Record<string, string>;
 
-interface TAuraParamMeta {
-  name: string;
-  flag: string;
-  optional: boolean;
-}
-
-function parseAuraUsage(helpOutput: string): { params: TAuraParamMeta[]; usageLine: string | undefined } {
-  const usageLine = helpOutput.split('\n').find(line => line.toLowerCase().startsWith('usage:'));
-  if (!usageLine)
-    return { params: [], usageLine };
-
-  const params: TAuraParamMeta[] = [];
-  const flagParamRegex = /(-{1,2}[a-z][\w-]*)(?:,\s*-{1,2}[a-z][\w-]*)?\s*<([^>]+)>/gi;
-
-  for (const match of usageLine.matchAll(flagParamRegex)) {
-    const flag = match[1];
-    const name = match[2];
-    const idx = match.index ?? 0;
-    const openBracket = usageLine.lastIndexOf('[', idx);
-    const closeBracket = usageLine.lastIndexOf(']', idx);
-    const optional = openBracket > closeBracket;
-    params.push({ name, flag, optional });
-  }
-
-  return { params, usageLine };
-}
-
-function getAuraModeHelp(modeId: string): string | undefined {
-  try {
-    return exec(`asusctl aura ${modeId} --help`);
-  }
-  catch {
-    consola.warn(`Skipping aura mode '${modeId}' due to help error`);
-    return undefined;
-  }
-}
-
+/** `rog_aura::builtin_modes::AuraModeNum` (DBus `u`). */
 const AURA_MODE_ID_MAP: Record<number, string> = {
   0: 'static',
   1: 'breathe',
   2: 'rainbow-cycle',
   3: 'rainbow-wave',
-  4: 'highlight',
-  5: 'strobing',
-  6: 'colour-cycle',
-  7: 'rainbow',
-  8: 'starry-night',
-  9: 'music',
+  4: 'stars',
+  5: 'rain',
+  6: 'highlight',
+  7: 'laser',
+  8: 'ripple',
   10: 'pulse',
+  11: 'comet',
+  12: 'flash',
 };
+
+const AURA_MODES: Array<TAuraMode & { value: number }> = [
+  { id: 'static', name: 'Static', value: 0, requiredParams: ['colour'], optionalParams: ['zone'] },
+  { id: 'breathe', name: 'Breathe', value: 1, requiredParams: ['colour', 'colour2', 'speed'], optionalParams: ['zone'] },
+  { id: 'rainbow-cycle', name: 'Rainbow Cycle', value: 2, requiredParams: ['speed'], optionalParams: ['zone'] },
+  { id: 'rainbow-wave', name: 'Rainbow Wave', value: 3, requiredParams: ['speed', 'direction'], optionalParams: ['zone'] },
+  { id: 'stars', name: 'Stars', value: 4, requiredParams: ['colour', 'colour2', 'speed'], optionalParams: ['zone'] },
+  { id: 'rain', name: 'Rain', value: 5, requiredParams: ['speed'], optionalParams: ['zone'] },
+  { id: 'highlight', name: 'Highlight', value: 6, requiredParams: ['colour', 'speed'], optionalParams: ['zone'] },
+  { id: 'laser', name: 'Laser', value: 7, requiredParams: ['colour', 'speed'], optionalParams: ['zone'] },
+  { id: 'ripple', name: 'Ripple', value: 8, requiredParams: ['colour', 'speed'], optionalParams: ['zone'] },
+  { id: 'pulse', name: 'Pulse', value: 10, requiredParams: ['colour'], optionalParams: ['zone'] },
+  { id: 'comet', name: 'Comet', value: 11, requiredParams: ['colour'], optionalParams: ['zone'] },
+  { id: 'flash', name: 'Flash', value: 12, requiredParams: ['colour'], optionalParams: ['zone'] },
+];
+
+/** Lazy: constructing `VariantType` at module load breaks Vite SSR (GTK not started). */
+let auraEffectTypeCache: GLib.VariantType | null = null;
+function auraEffectVariantType(): GLib.VariantType {
+  if (!auraEffectTypeCache)
+    auraEffectTypeCache = new GLib.VariantType('(uu(yyy)(yyy)ss)');
+  return auraEffectTypeCache;
+}
 
 export interface TCurrentAuraState {
   modeId?: string;
@@ -197,85 +195,32 @@ export interface TCurrentAuraState {
   direction?: string;
 }
 
-function findAuraDevicePaths(): string[] {
-  try {
-    const output = exec('gdbus introspect --system --dest xyz.ljones.Asusd --object-path /xyz/ljones/aura');
-    const paths: string[] = [];
-    const regex = /^\s*node\s+([^\s{]+)/gm;
-    let match: RegExpExecArray | null;
-    // eslint-disable-next-line no-cond-assign
-    while ((match = regex.exec(output)) !== null) {
-      const name = match[1];
-      // ignore root listings and absolute paths
-      if (name === '{' || name.startsWith('/'))
-        continue;
-      paths.push(`/xyz/ljones/aura/${name}`);
-    }
-    return paths;
-  }
-  catch (error) {
-    consola.error('Failed to discover aura devices via dbus:', error);
-    return [];
-  }
+function colourToHex(colour: GLib.Variant): string {
+  return Array.from({ length: 3 }, (_, i) =>
+    colour.getChildValue(i).getByte().toString(16).padStart(2, '0'),
+  ).join('');
 }
 
-function hasAuraInterface(path: string): boolean {
-  try {
-    const output = exec(`gdbus introspect --system --dest xyz.ljones.Asusd --object-path ${path}`);
-    return output.includes('interface xyz.ljones.Aura');
-  }
-  catch {
-    return false;
-  }
-}
-
-function getAuraProperties(path: string): string | undefined {
-  try {
-    if (!hasAuraInterface(path)) {
-      return undefined;
-    }
-    return exec(`gdbus call --system --dest xyz.ljones.Asusd --object-path ${path} --method org.freedesktop.DBus.Properties.GetAll 'xyz.ljones.Aura'`);
-  }
-  catch (error) {
-    consola.error(`Failed to read aura properties from ${path}:`, error);
-    return undefined;
-  }
-}
-
-function parseLedModeData(props: string): TCurrentAuraState | undefined {
-  // Example: 'LedModeData': <(uint32 1, uint32 0, (byte 0xb5, byte 0x83, byte 0x5a), (byte 0x26, byte 0xa2, byte 0x69), 'Med', 'Right')>
-  const dataRegex = /LedModeData': <\(uint32\s+(\d+),\s+uint32\s+(\d+),\s+\(byte\s+0x([0-9a-f]+),\s+byte\s+0x([0-9a-f]+),\s+byte\s+0x([0-9a-f]+)\),\s+\(byte\s+0x([0-9a-f]+),\s+byte\s+0x([0-9a-f]+),\s+byte\s+0x([0-9a-f]+)\),\s+'([^']+)',\s+'([^']+)'\)>/i;
-  const match = props.match(dataRegex);
-  if (!match)
-    return undefined;
-
-  const modeRaw = Number.parseInt(match[1], 10);
-  const zone = Number.parseInt(match[2], 10);
-  const c1 = match.slice(3, 6).map(v => Number.parseInt(v, 16));
-  const c2 = match.slice(6, 9).map(v => Number.parseInt(v, 16));
-  const speed = match[9];
-  const direction = match[10];
-
-  const toHex = (rgb: number[]) => rgb.map(v => v.toString(16).padStart(2, '0')).join('');
-
+function parseLedModeData(data: GLib.Variant): TCurrentAuraState | undefined {
+  const modeRaw = getUintVariant(data.getChildValue(0));
+  const zone = getUintVariant(data.getChildValue(1));
   return {
     modeRaw,
     modeId: AURA_MODE_ID_MAP[modeRaw],
     zone,
-    colour: toHex(c1),
-    colour2: toHex(c2),
-    speed,
-    direction,
+    colour: colourToHex(data.getChildValue(2)),
+    colour2: colourToHex(data.getChildValue(3)),
+    speed: data.getChildValue(4).getString(),
+    direction: data.getChildValue(5).getString(),
   };
 }
 
 export function getCurrentAuraState(): TCurrentAuraState | undefined {
-  const paths = findAuraDevicePaths();
-  for (const path of paths) {
-    const props = getAuraProperties(path);
-    if (!props)
+  for (const proxy of getAuraProxies()) {
+    const data = getProperty(proxy, 'LedModeData');
+    if (!data)
       continue;
-    const state = parseLedModeData(props);
+    const state = parseLedModeData(data);
     if (state)
       return state;
   }
@@ -284,44 +229,13 @@ export function getCurrentAuraState(): TCurrentAuraState | undefined {
 
 export function getAllAuraModes(): TAuraMode[] {
   try {
-    const output = exec('asusctl aura');
-    // Parse available modes section from default aura output
-    const lines = output.split('\n');
-    const modes: TAuraMode[] = [];
-    const availableIndex = lines.findIndex(line => line.toLowerCase().includes('available modes'));
-    if (availableIndex === -1)
-      return modes;
-
-    // Collect consecutive non-empty indented lines after "Available modes:"
-    for (let i = availableIndex + 1; i < lines.length; i += 1) {
-      const raw = lines[i];
-      if (!raw || raw.trim().length === 0)
-        break;
-      const name = raw.trim();
-      const id = name.toLowerCase().replace(/\s+/g, '-');
-
-      const helpOutput = getAuraModeHelp(id);
-      if (!helpOutput)
-        continue;
-
-      const { params, usageLine } = parseAuraUsage(helpOutput);
-      if (!usageLine) {
-        consola.warn(`Skipping aura mode '${id}' due to missing usage info`);
-        continue;
-      }
-
-      const requiredParams = params.filter(p => !p.optional).map(p => p.name);
-      const optionalParams = params.filter(p => p.optional).map(p => p.name);
-
-      modes.push({
-        id,
-        name,
-        requiredParams,
-        optionalParams,
-      });
-    }
-
-    return modes;
+    const supported = getProperty(getFirstAuraProxy(), 'SupportedBasicModes');
+    if (!supported)
+      return [];
+    const supportedValues = new Set(
+      Array.from({ length: supported.nChildren() }, (_, i) => getUintVariant(supported.getChildValue(i))),
+    );
+    return AURA_MODES.filter(mode => supportedValues.has(mode.value));
   }
   catch (error) {
     consola.error('Failed to get aura modes:', error);
@@ -329,40 +243,44 @@ export function getAllAuraModes(): TAuraMode[] {
   }
 }
 
+function parseHexColour(hex: string | undefined): [number, number, number] {
+  const normalized = hex?.replace(/^#/, '').padEnd(6, '0').slice(0, 6) ?? 'ffffff';
+  return [
+    Number.parseInt(normalized.slice(0, 2), 16),
+    Number.parseInt(normalized.slice(2, 4), 16),
+    Number.parseInt(normalized.slice(4, 6), 16),
+  ];
+}
+
+function titleCaseEnum(value: string | undefined, fallback: string, allowed: string[]): string {
+  const normalized = value?.toLowerCase() ?? fallback;
+  return allowed.includes(normalized)
+    ? normalized[0].toUpperCase() + normalized.slice(1)
+    : fallback[0].toUpperCase() + fallback.slice(1);
+}
+
+function auraEffectVariant(modeValue: number, params: TAuraModeParams): GLib.Variant {
+  const zone = Number.parseInt(params.zone ?? '0', 10) || 0;
+  const [r1, g1, b1] = parseHexColour(params.colour);
+  const [r2, g2, b2] = parseHexColour(params.colour2);
+  const speed = titleCaseEnum(params.speed, 'med', ['low', 'med', 'high']);
+  const direction = titleCaseEnum(params.direction, 'right', ['up', 'down', 'left', 'right']);
+
+  return GLib.Variant.parse(
+    `(uint32 ${modeValue}, uint32 ${zone}, (byte ${r1}, byte ${g1}, byte ${b1}), (byte ${r2}, byte ${g2}, byte ${b2}), '${speed}', '${direction}')`,
+    auraEffectVariantType(),
+  );
+}
+
 export function setAuraMode(modeId: string, params: TAuraModeParams): boolean {
   try {
-    const helpOutput = getAuraModeHelp(modeId);
-    if (!helpOutput) {
-      consola.error(`Missing usage info for aura mode '${modeId}'`);
+    const mode = AURA_MODES.find(m => m.id === modeId);
+    if (!mode)
       return false;
+    const effect = auraEffectVariant(mode.value, params);
+    for (const proxy of getAuraProxies()) {
+      setProperty(proxy, AURA_IFACE, 'LedModeData', effect);
     }
-
-    const { params: meta, usageLine } = parseAuraUsage(helpOutput);
-    if (!usageLine) {
-      consola.error(`Missing usage info for aura mode '${modeId}'`);
-      return false;
-    }
-
-    const requiredArgs: string[] = [];
-    const optionalArgs: string[] = [];
-
-    for (const param of meta) {
-      const value = params[param.name];
-      if (param.optional) {
-        if (value !== undefined)
-          optionalArgs.push(`${param.flag} ${value}`);
-      }
-      else {
-        if (value === undefined) {
-          consola.error(`Missing required parameter '${param.name}' for aura mode '${modeId}'`);
-          return false;
-        }
-        requiredArgs.push(`${param.flag} ${value}`);
-      }
-    }
-
-    const argString = [...requiredArgs, ...optionalArgs].join(' ');
-    exec(`asusctl aura ${modeId} ${argString}`.trim());
     return true;
   }
   catch (error) {
